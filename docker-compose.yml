@@ -1,0 +1,7 @@
+services:
+  taskflow:
+    build: .
+    container_name: taskflow-api
+    ports:
+      - "5001:5000"
+    restart: always
