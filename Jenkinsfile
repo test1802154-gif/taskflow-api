@@ -2,80 +2,63 @@ pipeline {
     agent any
 
     environment {
-        // ⚠️ নিজের Docker Hub username বসাও
-        DOCKER_USER = 'shaffat01'
+        DOCKER_USER = 'shaffat01' // ⚠️ তোমার Docker Hub Username বসাও
         IMAGE_NAME  = 'taskflow-api'
-        IMAGE_TAG   = "${env.BUILD_NUMBER}"
-        FULL_IMAGE  = "${DOCKER_USER}/${IMAGE_NAME}"
+        IMAGE_TAG   = "${env.BRANCH_NAME}-${env.BUILD_NUMBER}" // dev-1, main-2 ইত্যাদি ট্যাগ হবে
     }
 
     stages {
         stage('Checkout') {
             steps {
+                echo "📥 Pulling code from branch: ${env.BRANCH_NAME}"
                 checkout scm
             }
         }
 
-        stage('Build Image') {
+        stage('Build & Test') {
             steps {
-                echo "🐳 Building ${FULL_IMAGE}:${IMAGE_TAG}"
-                sh """
-                    docker build -t ${FULL_IMAGE}:${IMAGE_TAG} .
-                    docker tag ${FULL_IMAGE}:${IMAGE_TAG} ${FULL_IMAGE}:latest
-                """
-            }
-        }
-
-        stage('Test') {
-            steps {
-                echo "🧪 Running pytest inside image"
-                sh """
-                    docker run --rm ${FULL_IMAGE}:${IMAGE_TAG} \
-                      sh -c "pip install pytest -q && pytest -q"
-                """
+                echo "🐳 Building Image for Branch: ${env.BRANCH_NAME}"
+                sh "docker build -t ${DOCKER_USER}/${IMAGE_NAME}:${IMAGE_TAG} ."
+                
+                echo "🧪 Running Tests..."
+                sh "docker run --rm ${DOCKER_USER}/${IMAGE_NAME}:${IMAGE_TAG} sh -c 'pip install pytest -q && pytest -q'"
             }
         }
 
         stage('Push to Docker Hub') {
             steps {
-                echo "📤 Login + Push to Docker Hub"
                 withCredentials([usernamePassword(
                     credentialsId: 'docker-hub-credentials',
                     usernameVariable: 'DH_USER',
                     passwordVariable: 'DH_PASS'
                 )]) {
-                    sh """
-                        echo "\$DH_PASS" | docker login -u "\$DH_USER" --password-stdin
-                        docker push ${FULL_IMAGE}:${IMAGE_TAG}
-                        docker push ${FULL_IMAGE}:latest
-                    """
+                    sh "echo \$DH_PASS | docker login -u \$DH_USER --password-stdin"
+                    sh "docker push ${DOCKER_USER}/${IMAGE_NAME}:${IMAGE_TAG}"
                 }
             }
         }
 
-        stage('Deploy from Hub Image') {
+        stage('Conditional Deployment') {
             steps {
-                echo "🚀 Deploy container on port 5001"
-                sh """
-                    docker stop taskflow-api || true
-                    docker rm taskflow-api || true
-
-                    # Hub থেকে latest pull করে run (production style)
-                    docker pull ${FULL_IMAGE}:${IMAGE_TAG}
-                    docker run -d --name taskflow-api -p 5001:5000 ${FULL_IMAGE}:${IMAGE_TAG}
-                """
-            }
-        }
-
-        stage('Health Check') {
-            steps {
-                sh """
-                    sleep 3
-                    curl -sf http://localhost:5001/health
-                    echo ""
-                    curl -sf http://localhost:5001/ | head -c 200
-                    echo ""
-                """
+                script {
+                    if (env.BRANCH_NAME == 'main') {
+                        echo "🚀 [PRODUCTION DEPLOYMENT] Running on Port 5001..."
+                        sh """
+                            docker stop taskflow-prod || true
+                            docker rm taskflow-prod || true
+                            docker run -d --name taskflow-prod -p 5001:5000 ${DOCKER_USER}/${IMAGE_NAME}:${IMAGE_TAG}
+                        """
+                    } else if (env.BRANCH_NAME == 'dev') {
+                        echo "🧪 [DEV DEPLOYMENT] Running on Port 5002..."
+                        sh """
+                            docker stop taskflow-dev || true
+                            docker rm taskflow-dev || true
+                            docker run -d --name taskflow-dev -p 5002:5000 ${DOCKER_USER}/${IMAGE_NAME}:${IMAGE_TAG}
+                        """
+                    } else {
+                        echo "ℹ️ Feature branch detected: Skipping deployment."
+                    }
+                }
             }
         }
     }
@@ -83,14 +66,9 @@ pipeline {
     post {
         always {
             sh 'docker logout || true'
-            sh 'docker image prune -f || true'
         }
         success {
-            echo "✅ LIVE: http://SERVER_IP:5001"
-            echo "✅ Docker Hub: https://hub.docker.com/r/${DOCKER_USER}/${IMAGE_NAME}"
-        }
-        failure {
-            echo "❌ Pipeline failed"
+            echo "✅ Branch '${env.BRANCH_NAME}' successfully built and deployed!"
         }
     }
 }
