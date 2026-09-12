@@ -81,16 +81,20 @@ pipeline {
     }
 
     post {
-        always {
-            sh 'docker logout || true'
-            sh 'docker image prune -f || true'
-        }
         success {
-            echo "✅ LIVE: http://SERVER_IP:5001"
-            echo "✅ Docker Hub: https://hub.docker.com/r/${DOCKER_USER}/${IMAGE_NAME}"
+            slackSend (
+                color: '#22c55e', // সবুজ কালার
+                channel: '#all-jenkins-alerts',
+                message: "🟢 *SUCCESS:* Job *${env.JOB_NAME}* [#${env.BUILD_NUMBER}] built successfully!\n👉 <${env.BUILD_URL}|View Build in Jenkins>"
+            )
         }
+        
         failure {
-            echo "❌ Pipeline failed"
+            slackSend (
+                color: '#ef4444', // লাল কালার
+                channel: '#all-jenkins-alerts',
+                message: "🔴 *FAILURE:* Job *${env.JOB_NAME}* [#${env.BUILD_NUMBER}] failed!\n👉 <${env.BUILD_URL}console|Check Logs>"
+            )
         }
     }
 }
